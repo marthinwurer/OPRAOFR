@@ -18,12 +18,12 @@ def get_melee_attacks(unit, charging, against):
     attacks = []
     for model in attacking_models:
         # impact
-        if "Impact" in model.rules and charging:
+        if "Impact" in model.rules and charging and "Fatigued" not in unit.rules:
             extra = {}
             if "Joust" in model.rules:
                 extra["AP"] = 1
             for i in range(model.rules["Impact"]):
-                attacks.append(Attack(2, rules={"Impact":0, **extra}))
+                attacks.append(Attack(2, rules={"Impacted":0, **extra}))
         # get the attacks from melee weapons, ie range == 0
         for weapon in model.equipment:
             if not weapon.melee:
@@ -36,12 +36,21 @@ def get_melee_attacks(unit, charging, against):
             for _ in range(num_attacks):
                 attacks.append(Attack(model.quality, 
                                       rules=merge_rules(merge_rules(weapon.rules, model.rules), unit.rules)))
+                if charging:
+                    attacks[-1].rules["Charging"] = True
+
     # postprocess slayer etc
+    num_impact = 0
     for attack in attacks:
+        if "Impacted" in attack.rules:
+            num_impact += 1
         if "Slayer" in attack.rules:
             large_count = len([m for m in against.models if m.rules.get("Tough", 1) >= 3])
             if large_count > len(against.models) / 2:
                 attack.rules["AP"] = attack.rules.get("AP", 0) + 2
+    if num_impact:
+        log.debug(f"num impact: {num_impact}")
+#         assert
 #     log.debug(f"Attacks: {attacks}")
     return attacks
 
@@ -65,6 +74,8 @@ def roll_attacks(attacks, target):
             bonus -= 999
         if "Wavering" in attack.rules:
             bonus -= 999
+        if "Impacted" in attack.rules:
+            bonus += 9999
 
         # do the thing
         roll = random.randint(1, 6)
@@ -77,7 +88,7 @@ def roll_attacks(attacks, target):
             # do special stuff here
             
             # TODO furious and relentless before rending?
-            if "Furious" in attack.rules:
+            if "Furious" in attack.rules and "Charging" in attack.rules:
                 log.debug("Furious trigger")
                 hits.append(Hit(attack.rules))
             
@@ -238,6 +249,11 @@ def generate_shooting_attacks(unit, distance):
                 attacks.append(Attack(model.quality, 
                                       rules=merge_rules(merge_rules(weapon.rules, model.rules), unit.rules)))
     
+    # ranged attacks are not fatigued
+    for attack in attacks:
+        if "Fatigued" in attack.rules:
+            del attack.rules["Fatigued"]
+    
     return attacks
 
 
@@ -266,8 +282,8 @@ def shoot(attacker, defender, distance):
     total_wounds = apply_wounds(defender, wounds)
     log.debug(f"{total_wounds} wounds")
     
-    # apply fatigued
-    attacker.rules["Fatigued"] = 0
+#     # apply fatigued
+#     attacker.rules["Fatigued"] = 0
     
     return total_wounds
 
@@ -305,6 +321,12 @@ def choose_unit_to_activate(battle, player):
     available_units = [u for u in player.units if "Activated" not in u.rules and u.alive]
     if not available_units:
         return None
+    
+    # pick a non-fatigued impact unit first
+    nfi = [u for u in available_units if "Fatigued" not in u.rules and "Impact" in u.models[-1].rules]
+    if nfi:
+        return random.sample(nfi, 1)[0]
+    
     # TODO sample from a zone, with priority baseed on rules
     # for now, just sample a random unit
     return random.sample(available_units, 1)[0]
@@ -370,9 +392,20 @@ def choose_action_for_unit(battle, player, unit):
     # if unit is wavering/shaken, they can only hold
     if "Wavering" in unit.rules:
         return ("Hold",)
+    speed = unit.speed
     
     # TODO decision tree for unit types, for now move towards nearest enemy unit
     enemy_units = [u for u in battle.all_units if u.controller != player.name and u.alive]
+    
+    if not enemy_units:
+        not_controlled = [o for o in battle.objectives if o.controller != player.name]
+        
+        if not not_controlled:
+            return "Hold", None
+        
+        closest_obj = get_closest(unit.x, unit.y, not_controlled)
+        distance_to = calc_distance(unit.x, unit.y, closest_obj.x, closest_obj.y)
+        return "Rush", min(speed * 2, distance_to + 2.5), get_angle_to(unit.x, unit.y, closest_obj)
     
     closest = get_closest(unit.x, unit.y, enemy_units)
     distance_to_closest = calc_distance(unit.x, unit.y, closest.x, closest.y)
@@ -380,7 +413,6 @@ def choose_action_for_unit(battle, player, unit):
     # now that we have the closest, figure out the angle to them. 
     angle = get_angle_to(unit.x, unit.y, closest)
     
-    speed = unit.speed
     
     # melee decision tree
     if unit.is_melee:
@@ -388,20 +420,41 @@ def choose_action_for_unit(battle, player, unit):
         if not_controlled:
             closest_obj = get_closest(unit.x, unit.y, not_controlled)
             distance_to = calc_distance(unit.x, unit.y, closest_obj.x, closest_obj.y)
-            enemies_in_way = [u for u in units_in_way(battle, unit, closest_obj) if u.controller != player.name and u.alive and calc_distance(u.x, u.y, closest_obj.x, closest_obj.y) < distance_to]
+            enemies_in_way = [u for u in units_in_way(battle, unit, closest_obj) if u.controller != player.name and u.alive and calc_distance(u.x, u.y, closest_obj.x, closest_obj.y) < (distance_to + 3.5)]
             if enemies_in_way:
                 closest_in_way = get_closest(unit.x, unit.y, enemies_in_way)
                 if calc_distance(*unpack_points(unit, closest_in_way)) <= speed * 2:
                     return "Charge", closest_in_way
-            return "Rush", min(speed * 2, distance_to + 3), get_angle_to(unit.x, unit.y, closest_obj)
+            return "Rush", min(speed * 2, distance_to + 2.5), get_angle_to(unit.x, unit.y, closest_obj)
         else: # 3
             if distance_to_closest <= speed * 2:
                 return "Charge", closest
             return "Rush", speed * 2, angle
+    
+    elif unit.is_ranged:
+#         u_range = unit.range
+#         if unit.range > distance_to_closest:
+#             return "Advance", 0, 0, closest
+        shootable_distance = speed + unit.range
+        in_range = [u for u in enemy_units if calc_distance(unit.x, unit.y, u.x, u.y) <= shootable_distance]
+        if in_range:
+            target = random.choice(in_range)
+        else:
+            target = closest
+        
+        angle = get_angle_to(unit.x, unit.y, target)
+        distance_to_target = calc_distance(unit.x, unit.y, target.x, target.y)
+        
+        dist_to_move = max(0, min(distance_to_target - 3, speed))
+        
+        return "Advance", dist_to_move, angle, closest
                                  
     
     if not unit.is_melee:
-        return "Advance", speed, angle, closest
+        
+        dist_to_move = max(0, min(distance_to_closest - 2, speed))
+        
+        return "Advance", dist_to_move, angle, closest
     
     if distance_to_closest <= speed * 2:
         return "Charge", closest
@@ -465,7 +518,7 @@ def execute_charge(battle, player, unit, action):
     
 def execute_action(battle, player, unit, action):
     a_type = action[0]
-    print(unit, action)
+    log.debug(f"executing {unit}, {action}")
     unit.rules["Activated"] = True
 
     if a_type == "Hold":
@@ -482,7 +535,7 @@ def execute_action(battle, player, unit, action):
     elif a_type == "Charge":
         execute_charge(battle, player, unit, action)
     else:
-        print("Invalid action")
+        log.debug("Invalid action")
 
 def check_objectives(battle):
     alive_units = [u for u in battle.all_units if u.alive and "Wavering" not in u.rules]
@@ -504,7 +557,7 @@ def check_objectives(battle):
 
 def do_round(battle, first_player_index):
     battle.round += 1
-    print("Starting Round", battle.round)
+    log.debug(f"Starting Round {battle.round}")
     # start by resetting activations
     for u in battle.all_units:
         if "Activated" in u.rules:
@@ -528,7 +581,7 @@ def do_round(battle, first_player_index):
         
         unit = choose_unit_to_activate(battle, current_player)
         if unit is None:
-            print("skipping")
+            log.debug(f"skipping {current_player}")
             continue
         
         action = choose_action_for_unit(battle, current_player, unit)
@@ -538,3 +591,8 @@ def do_round(battle, first_player_index):
     
     return next_player_index # player who finished activating first
 
+
+def run_battle(battle):
+    next_player = 0
+    for i in range(4):
+        next_player = do_round(battle, next_player)

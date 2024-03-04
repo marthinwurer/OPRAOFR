@@ -164,7 +164,19 @@ class Unit:
         if "Immobile" in self.rules or any(["Immobile" in model.rules for model in self.models]):
             _speed = 0
         return _speed
+    
+    @property
+    def range(self):
+        all_ranged = []
+        for model in self.models:
+            for equipment in model.equipment:
+                if not equipment.melee:
+                    all_ranged.append(equipment)
         
+        if not all_ranged:
+            return 0
+        else:
+            return all_ranged[-1].range
     
     def apply_wounds(self, wounds):
         pass
@@ -231,6 +243,8 @@ class Player:
         self.name = name
         self.units = units
         self.zone = zone
+        for unit in self.units:
+            unit.controller = self.name
         
         
 class Objective:
