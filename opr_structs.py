@@ -243,8 +243,10 @@ class Player:
         self.name = name
         self.units = units
         self.zone = zone
+        self.activation = None
         for unit in self.units:
             unit.controller = self.name
+        
         
         
 class Objective:
