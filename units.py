@@ -116,6 +116,25 @@ grail_knights = Unit(models_for(grail_knight, 5), 5, name="Grail Knights")
 grail_knights_c = Unit(models_for(grail_knight, 10), 5, name="Grail Knights")
 
 
+# Wood Elves
+heavy_claws = Weapon(1, {"AP": 1})
+treeman = Model(5, 5, [heavy_claws], rules={"Strider":True, "Furious":True})
+treemen = Unit(models_for(treeman, 10), 5, name="Treemen")
+treemen_c = Unit(models_for(treeman, 20), 5, name="Treemen")
+
+forest_rider = Model(4, 4, [lance], rules={"Fast": True, "Strider": True, "Scout": True, "Impact": 1})
+forest_riders = Unit(models_for(forest_rider, 5), 5, name="Forest Riders")
+forest_riders_c = Unit(models_for(forest_rider, 10), 5, name="Forest Riders")
+
+claw = Weapon(1, {})
+shortbow_tr = Weapon(1, {"Range": 18, "Rending":True})
+bow_revenant = Model(5, 5, [shortbow_tr, claw], rules={"Strider":True, "Malice":True})
+bow_revenants = Unit(models_for(bow_revenant, 5), 5, name="Tree Revenants (bow)")
+bow_revenants_c = Unit(models_for(bow_revenant, 10), 5, name="Tree Revenants (bow)")
+
+forest_guard = Model(5, 5, [longbow, hand_weapon], rules={"Strider":True})
+forest_guards = Unit(models_for(forest_guard, 5), 5, name="Forest Guard")
+forest_guards_c = Unit(models_for(forest_guard, 10), 5, name="Forest Guard")
 
 # Other
 goblin_warrior = Model(5, 6, [hand_weapon], rules={})

@@ -257,12 +257,15 @@ class Objective:
     
     def __repr__(self):
         return f"Objective({self.x}, {self.y}, {self.controller})"
+
+
     
     
 class Battle:
     def __init__(self, players):
         # TODO allow objective placement
         self.objectives = [Objective(12, 24),Objective(36, 24),Objective(60, 24),]
+        self.terrain = []
         self.players = players
         self.round = 0
     

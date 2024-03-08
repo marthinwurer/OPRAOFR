@@ -116,7 +116,9 @@ def apply_hits(unit, hits):
         # TODO better Shield Wall
         bonus = 0
         if "Shield Wall" in unit.models[-1].rules:
-            bonus = 1
+            bonus += 1
+        if "Cover" in hit.rules:
+            bonus += 1
         roll = random.randint(1, 6)
         success = (roll - hit.rules.get("AP", 0) + bonus >= unit.defense or roll == 6) and roll != 1
         if success:
@@ -257,7 +259,7 @@ def generate_shooting_attacks(unit, distance):
     return attacks
 
 
-def shoot(attacker, defender, distance):
+def shoot(battle, attacker, defender, distance):
     log.debug(f"{attacker} shooting at {defender}")
     # determine attacks
     attacks = generate_shooting_attacks(attacker, distance)
@@ -265,6 +267,14 @@ def shoot(attacker, defender, distance):
         log.debug("Out of range")
         return 0
     log.debug(f"{len(attacks)} attacks")
+    
+    # handle cover:
+    # TODO skip cover terrain that the unit is in
+    collisions = terrain_collision(attacker, defender, 0, battle.terrain)
+    if any(["Cover" in t.rules for t in collisions]):
+        log.debug("Target has cover")
+        for a in attacks:
+            a.rules["Cover"] = True
     
     # Handle stealth
     if all(["Stealth" in model.rules for model in defender.models]) and distance >= 12:
@@ -288,8 +298,8 @@ def shoot(attacker, defender, distance):
     return total_wounds
 
 
-def do_shooting(attacker, defender, distance):
-    a_wounds = shoot(attacker, defender, distance)    
+def do_shooting(battle, attacker, defender, distance):
+    a_wounds = shoot(battle, attacker, defender, distance)    
     if not defender.models:
         # enemy is dead, we're done
         return
@@ -301,6 +311,27 @@ def do_shooting(attacker, defender, distance):
 
 
 
+def calc_terrain_movement(battle, unit, angle, distance):
+    potential = battle.terrain
+    while True:
+        # get the offset and apply it to the unit's position
+        x_off, y_off = offset_at_angle(angle, distance)
+
+        t_x = unit.x + x_off
+        t_y = unit.y + y_off
+
+        # check terrain collisions
+        collisions = terrain_collision(unit, Point(t_x, t_y), 2, potential)
+        potential = collisions
+        
+        # for now just iterate until less than or equal to 6
+        if any(["Strider" not in m.rules for m in unit.models]) and distance > 6 and any(["Difficult" in c.rules for c in collisions]):
+            distance = max(0, distance - 1)
+            continue
+        
+        break
+    
+    return distance, t_x, t_y
 
 
 def execute_advance(battle, player, unit, action):
@@ -308,27 +339,35 @@ def execute_advance(battle, player, unit, action):
     # TODO validate desired distance
     # TODO movement effects
     # get the offset and apply it to the unit's position
-    x_off, y_off = offset_at_angle(action[2], action[1])
-    unit.x += x_off
-    unit.y += y_off
+    angle = action[2]
+    distance = action[1]
+    
+    distance, t_x, t_y = calc_terrain_movement(battle, unit, angle, distance)
+    
+    unit.x = t_x
+    unit.y = t_y
     
     # TODO collisions with terrain and other units
     
     if action[3]:
         distance = calc_distance(unit.x, unit.y, action[3].x, action[3].y)
-        do_shooting(unit, action[3], distance)
+        do_shooting(battle, unit, action[3], distance)
+
         
         
 def execute_rush(battle, player, unit, action):
     # (rush, desired_distance, angle)
     # TODO validate desired distance
     # TODO movement effects
-    # get the offset and apply it to the unit's position
-    x_off, y_off = offset_at_angle(action[2], action[1])
-    unit.x += x_off
-    unit.y += y_off
+    angle = action[2]
+    distance = action[1]
     
-    # TODO collisions with terrain and other units
+    distance, t_x, t_y = calc_terrain_movement(battle, unit, angle, distance)
+    
+    unit.x = t_x
+    unit.y = t_y
+    
+    # TODO collisions with other units
     
     # no combat
     
@@ -344,9 +383,15 @@ def execute_charge(battle, player, unit, action):
     # move to touch the enemy
     movement_needed = distance_to_closest - 2  # For now units are 1" spheres
     angle_needed = get_angle_to(unit.x, unit.y, closest)
-    x_off, y_off = offset_at_angle(angle_needed, movement_needed)
-    unit.x += x_off
-    unit.y += y_off
+    
+    distance, t_x, t_y = calc_terrain_movement(battle, unit, angle_needed, movement_needed)
+    
+    unit.x = t_x
+    unit.y = t_y
+    
+    if distance < movement_needed:
+        log.debug(f"Charge failed, needed {movement_needed} but only went {distance}")
+        return
     
     # do the combat
     do_melee(unit, closest)
@@ -359,7 +404,7 @@ def execute_charge(battle, player, unit, action):
     
 def execute_action(battle, player, unit, action):
     a_type = action[0]
-    log.debug(f"executing {unit}, {action}")
+    log.debug(f"executing {player.name} {unit}, {action}")
     unit.rules["Activated"] = True
 
     if a_type == "Hold":

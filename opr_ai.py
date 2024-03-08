@@ -93,6 +93,22 @@ def line_point_distance(p1, p2, p0):
     return abs((x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1)) / distance
 
 
+def terrain_collision(start, end, radius, terrain):
+    collisions = []
+    for t in terrain:
+        to_end = calc_distance(*unpack_points(t, end))
+        to_start = calc_distance(*unpack_points(t, start))
+        from_line = line_point_distance(start, end, t)
+        between = calc_distance(*unpack_points(start, end))
+#         print(to_end, to_start, from_line, t)
+        
+        td = (t.diameter / 2) + radius
+        btd = td + between
+        if to_end < td or to_start < td or (from_line < td and to_end < btd and to_start < btd):
+            collisions.append(t)
+    return collisions
+
+
 def units_in_way(battle, start, finish, width=6):
     # find the line from start to finish, then calculate the distance from that line for all units.
     # if they're within the width, then they're in the way
